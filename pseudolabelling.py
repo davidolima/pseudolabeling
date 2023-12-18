@@ -21,21 +21,38 @@ from skimage.color import gray2rgb
 import numpy as np
 from tqdm import tqdm
 from train import *
-from utils.data import LabelledSet, UnlabelledSet,FullRadiographDataset
+from utils.data import LabelledSet, UnlabelledSet #, FullRadiographDataset
 
 # %%
 # Dataset radiografias
-# ds = FullRadiographDataset("/datasets/pan-radiographs/", [1,2,3,4,5], None)
+root = "/datasets/pan-radiographs/"
+transforms = T.Compose([
+    T.PILToTensor(),
+    T.Resize((224,224)),
+    # T.ToTensor(),
+])
+# ds = FullRadiographDataset(root, [1,2,3,4,5], transforms)
+labelled_set = LabelledSet(root, list(range(1,20)), transforms)
+test_set = LabelledSet(root, list(range(20,29)), transforms)
+unlabelled_set = UnlabelledSet(root, list(range(29,31)), transforms)
+
+print(f"[!] {sum(map(len, [labelled_set,test_set,unlabelled_set]))} images were loaded in total.")
 
 # %% [markdown]
 # # Setup
 
 # %%
-epochs = 1000
-batch_size = 128
-num_classes = 10
+epochs = 10
+batch_size = 8
+num_classes = 2
+lr = 1e-5
+T1 = 100
+T2 = 600
+alpha_f = 3
+criterion = nn.BCELoss()
 device = "cuda" if torch.cuda.is_available() else 'cpu'
 
+# %%
 def alpha(t, T1=100, T2=600, alpha_f=3):
     if t < T1:
         return 0
@@ -45,49 +62,29 @@ def alpha(t, T1=100, T2=600, alpha_f=3):
         return alpha_f
 
 # %%
-transforms = T.Compose([
-    gray2rgb,
-    T.ToTensor()
-])
-
-train_ds, test_ds = train_test_split(
-    MNIST("/Tera/datasets/", download=True, transform=transforms),
-    test_size=.2,
-    train_size=.8,
-    shuffle=True
-)
-
-labelled, unlabelled = train_test_split(
-    train_ds,
-    test_size=.2,
-    train_size=.8,
-    shuffle=True
-) 
 
 labelled_loader = DataLoader(
-    labelled,
+    labelled_set,
     batch_size=batch_size,
     shuffle=True,
 )
 
 unlabelled_loader = DataLoader(
-    unlabelled,
+    unlabelled_set,
     batch_size=batch_size,
     shuffle=True,
 )
 
-criterion = nn.CrossEntropyLoss()
-
 # %%
-# def get_state_dict(self, *args, **kwargs):
-#     #kwargs.pop("check_hash")
-#     return load_state_dict_from_url(self.url, *args, **kwargs)
-# WeightsEnum.get_state_dict = get_state_dict
+def get_state_dict(self, *args, **kwargs):
+    kwargs.pop("check_hash")
+    return load_state_dict_from_url(self.url, *args, **kwargs)
+WeightsEnum.get_state_dict = get_state_dict
 
-model = torchvision.models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+model = torchvision.models.efficientnet_b0(weights="DEFAULT")
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
 
-opt = Adam(model.parameters(), lr=1e-3)
+opt = Adam(model.parameters(), lr=lr)
 
 # %% [markdown]
 # # Learn over annotated dataset
@@ -107,21 +104,32 @@ for epoch in range(epochs):
     running_loss = 0
     running_metrics = [0] * len(metrics)
     bar = tqdm(labelled_loader)
-    for (x,y), (unlabelled,_) in zip(bar,unlabelled_loader):
-        x,y, unlabelled = x.to(device), y.to(device), unlabelled.to(device)
-        y_hat = model(x)
+    for x,y in bar:
+        x,y = x.to(device), y.to(device)
+        y_hat = model(x.float())
 
         # pseudo-label loss is calculated only after first epoch
-        if epoch == 0:
-            loss = criterion(y_hat, y)
-        else:
-            loss = criterion(y_hat,y) + alpha(epoch)*criterion(model(unlabelled), pseudo_labels.detach())
-
         opt.zero_grad()
+        if epoch == 0:
+            loss = criterion(y_hat.argmax(1).float(), y.float())
+            pseudo_labels = []
+            for unlabelled_x, _ in unlabelled_loader:
+                pseudo_labels += model(unlabelled_x.to(device).float()).to('cpu')
+        else:
+            pseudo_loss = 0
+            total_pseudo = 0
+            new_pseudo_labels = []
+            for (unlabelled_x, _), y_prime in zip(unlabelled_loader, pseudo_labels):
+                y_unlabel_predict = model(unlabelled_x)
+                new_pseudo_labels += y_unlabel_predict
+                pseudo_loss += criterion(y_unlabel_predict, y_prime)*unlabelled_x.size(0)
+                total_pseudo += unlabelled_x.size(0)
+                print(pseudo_loss, total_pseudo, unlabelled_x.size(0))
+            pseudo_labels = new_pseudo_labels
+
+            loss = criterion(y_hat,y) + alpha(epoch,T1=T1,T2=T2,alpha_f=alpha_f)*(pseudo_loss/total_pseudo)
+
         running_loss += loss.item()*x.size(0)
-
-        pseudo_labels = model(unlabelled) # Calculate pseudo-labels for the next batch
-
         loss.backward(retain_graph=True)
 
         total += x.size(0)
@@ -151,7 +159,7 @@ evaluate (
     epochs,
     criterion,
     test_loader,
-    [accuracy_score, lambda x,y: f1_score(x,y, average='macro')],
+    [accuracy_score, f1_score],
 )
 
 # %% [markdown]

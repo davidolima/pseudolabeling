@@ -37,6 +37,8 @@ class FullRadiographDataset(Dataset):
         # this maybe useful later for reproducibility
         self.filepaths.sort()
 
+        print(f"> Successfully Loaded {len(self.filepaths)} images.")
+
     def _load_images(self,fold_txt_dir):
         for i in self.fold_nums:
             filepath = os.path.join(self.root_dir, fold_txt_dir, f'{i:02d}.txt')
@@ -45,8 +47,8 @@ class FullRadiographDataset(Dataset):
                     img_relpath = line.strip()
                     filename = img_relpath.split('/')[-1]
                     sex = filename.split('-')[10]
-                    if sex not in ['M', 'F']:
-                        continue
+                    # if sex not in ['M', 'F']:
+                    #     continue
                     self.filepaths.append(os.path.join(self.root_dir, img_relpath))
 
     def __len__(self) -> int:
@@ -72,13 +74,12 @@ class FullRadiographDataset(Dataset):
 
         label_tensor = torch.tensor(label, dtype=torch.int64)
 
-        image = Image.open(filepath)
-        image = image.convert('RGB')
+        image = Image.open(filepath).convert('RGB')
 
         # apply transforms
         if self.albumentations:
-            image = np.array(image)
-            img_tensor = self.transforms(image=image)["image"]
+            #image = np.array(image)
+            img_tensor = self.transforms(image)
         else:
             raise Exception('Not implemented yet.')
 
@@ -88,19 +89,85 @@ class FullRadiographDataset(Dataset):
 class LabelledSet(FullRadiographDataset):
     def __init__(self, root_dir, fold_nums, transforms):
         super().__init__(root_dir, fold_nums, transforms)
-    
-    def _load_images(self) -> None:
-        raise NotImplementedError()
 
-    def __getitem__(self, index) -> list[torch.Tensor, torch.Tensor]:
-        raise NotImplementedError()
+    def __getitem__(self, index: int):
+        # image and label
+        filepath = self.filepaths[index]
+        filename = filepath.split('/')[-1]
+
+        # get the labels
+        sex = filename.split('-')[10]
+        # age = filename.split('-')[-2][1:]
+        # months = filename.split('-')[-1][1:3]
+
+        if sex == 'F':
+            label = 0
+        elif sex == 'M':
+            label = 1
+        else:
+            # maybe not good practice, because the model will
+            # see one image more times than the others.
+            # best would be to prevent any images without
+            # labels to not reach this point
+            # in the labelled set.
+            return self.__getitem__(index+1)
+
+        label_tensor = torch.tensor(label, dtype=torch.int64)
+
+        image = Image.open(filepath)
+        image = image.convert('RGB')
+
+        # apply transforms
+        if self.albumentations:
+            # image = np.array(image)
+            img_tensor = self.transforms(image)
+        else:
+            raise Exception('Not implemented yet.')
+
+        return img_tensor, label_tensor
 
 class UnlabelledSet(FullRadiographDataset):
     def __init__(self, root_dir, fold_nums, transforms):
         super().__init__(root_dir, fold_nums, transforms)
-    
-    def _load_images(self) -> None:
-        raise NotImplementedError()
 
-    def __getitem__(self, index) -> list[torch.Tensor, torch.Tensor]:
-        raise NotImplementedError()
+    def _load_images(self,fold_txt_dir):
+        for i in self.fold_nums:
+            filepath = os.path.join(self.root_dir, fold_txt_dir, f'{i:02d}.txt')
+            with open(filepath) as txt_file:
+                for line in txt_file:
+                    img_relpath = line.strip()
+                    filename = img_relpath.split('/')[-1]
+                    sex = filename.split('-')[10]
+                    self.filepaths.append(os.path.join(self.root_dir, img_relpath))
+
+    def __getitem__(self, index: int):
+        # image and label
+        filepath = self.filepaths[index]
+        filename = filepath.split('/')[-1]
+
+        # always return no label
+        label = -1
+        label_tensor = torch.tensor(label, dtype=torch.int64)
+
+        image = Image.open(filepath)
+        image = image.convert('RGB')
+
+        # apply transforms
+        if self.albumentations:
+            # image = np.array(image)
+            img_tensor = self.transforms(image)
+        else:
+            raise Exception('Not implemented yet.')
+
+        return img_tensor, label_tensor
+
+if __name__ == "__main__":
+    root = "/datasets/pan-radiographs/"
+    f = FullRadiographDataset(root, list(range(1,31)), None)
+    print("[!] Successfully loaded full radiograph dataset.")
+    u = UnlabelledSet(root, list(range(1,26)), None)
+    print("[!] Successfully loaded unlabelled dataset.")
+    l = LabelledSet(root, list(range(26,31)), None)
+    print("[!] Successfully loaded labelled dataset.")
+
+    print("[!] All good!")
