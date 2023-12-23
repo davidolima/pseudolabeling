@@ -17,7 +17,8 @@ def train(model:nn.Module,
           metrics: list,
           val_loader:DataLoader=None,
           device=None,
-          history=False):
+          show_intermediate_metrics=False,
+          history=False) -> nn.Module:
     
     if history or val_loader is not None:
         raise NotImplemented()
@@ -25,7 +26,7 @@ def train(model:nn.Module,
     if device is None:
         device = "cuda" if torch.cuda.is_available() else 'cpu'
         
-    print("Training on", torch.cuda.get_device_name() if torch.cuda.is_available() else "CPU")
+    print("Training on", torch.cuda.get_device_name() if torch.cuda.is_available() else "CPU" + f"for {epochs} epochs.")
 
     model.to(device)
     model.train()
@@ -35,24 +36,39 @@ def train(model:nn.Module,
         running_metrics = [0] * len(metrics)
         bar = tqdm(dataloader)
         for x,y in bar:
-            x,y = x.to(device), y.to(device)
-            y_hat = model(x)
+            #print(x,y)
+            x,y = x.to(device), y.to(device).float()
+            y_hat = model(x.float()).argmax(axis=1).float()
+
+            opt.zero_grad()
             loss = criterion(y_hat, y)
             running_loss += loss.item()*x.size(0)
             total += x.size(0)
-            
-            for i, metric in enumerate(metrics):
-                running_metrics[i] += metric(y_hat.cpu().argmax(axis=1),y.cpu())*x.size(0)
 
-            opt.zero_grad()
+            for i, metric in enumerate(metrics):
+                running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy()) * x.size(0)
+
             loss.backward()
             opt.step()
-            bar.set_description(f"[Epoch {epoch}]")
+            if show_intermediate_metrics:
+                metrics_text = f"[Epoch {epoch}/{epochs}] Loss: {running_loss/total:.5f} "
+                for i, metric in enumerate(metrics):
+                    metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
+
+                bar.set_description(metrics_text)
+            else:
+                bar.set_description(f"[Epoch {epoch}/{epochs}]")
         
-        metrics_text = f"[Epoch {epoch}] Loss: {running_loss/total:.5f} "
+        metrics_text = f"[Epoch {epoch}/{epochs}] Loss: {running_loss/total:.5f} "
         for i, metric in enumerate(metrics):
             metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} " 
         print(metrics_text)
+
+    if history:
+        raise NotImplementedError()
+        #return model, history
+
+    return model
 
 def evaluate(
         model:nn.Module, 

@@ -90,6 +90,18 @@ class LabelledSet(FullRadiographDataset):
     def __init__(self, root_dir, fold_nums, transforms):
         super().__init__(root_dir, fold_nums, transforms)
 
+    def _load_images(self,fold_txt_dir):
+        for i in self.fold_nums:
+            filepath = os.path.join(self.root_dir, fold_txt_dir, f'{i:02d}.txt')
+            with open(filepath) as txt_file:
+                for line in txt_file:
+                    img_relpath = line.strip()
+                    filename = img_relpath.split('/')[-1]
+                    sex = filename.split('-')[10]
+                    if sex not in ['M', 'F']: # Assert all images are labelled.
+                        continue
+                    self.filepaths.append(os.path.join(self.root_dir, img_relpath))
+
     def __getitem__(self, index: int):
         # image and label
         filepath = self.filepaths[index]
@@ -100,19 +112,9 @@ class LabelledSet(FullRadiographDataset):
         # age = filename.split('-')[-2][1:]
         # months = filename.split('-')[-1][1:3]
 
-        if sex == 'F':
-            label = 0
-        elif sex == 'M':
-            label = 1
-        else:
-            # maybe not good practice, because the model will
-            # see one image more times than the others.
-            # best would be to prevent any images without
-            # labels to not reach this point
-            # in the labelled set.
-            return self.__getitem__(index+1)
 
-        label_tensor = torch.tensor(label, dtype=torch.int64)
+        label = 0 if sex == "M" else 1
+        label_tensor = torch.tensor(label, requires_grad=True, dtype=torch.float)
 
         image = Image.open(filepath)
         image = image.convert('RGB')
@@ -147,7 +149,7 @@ class UnlabelledSet(FullRadiographDataset):
 
         # always return no label
         label = -1
-        label_tensor = torch.tensor(label, dtype=torch.int64)
+        label_tensor = torch.tensor(label, requires_grad=True, dtype=torch.float)
 
         image = Image.open(filepath)
         image = image.convert('RGB')
