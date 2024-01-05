@@ -6,19 +6,13 @@
 # %%
 import torch
 import torch.nn as nn
-from torch.optim import Adam, AdamW
-from torch.utils.data import DataLoader,Dataset
+from torch.optim import AdamW
+from torch.utils.data import DataLoader
 
-import torchvision
-from torchvision.datasets import MNIST
 import torchvision.transforms as T
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-from torchvision.models._api import WeightsEnum
-from torch.hub import load_state_dict_from_url
 
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import train_test_split
-from skimage.color import gray2rgb
 
 import numpy as np
 import datetime as dt
@@ -103,7 +97,7 @@ unlabelled_loader = DataLoader(
 #     return load_state_dict_from_url(self.url, *args, **kwargs)
 # WeightsEnum.get_state_dict = get_state_dict
 
-model = torchvision.models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, configs['num_classes'])
 
 opt = AdamW(model.parameters(), lr=configs['lr'])
