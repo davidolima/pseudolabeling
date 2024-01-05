@@ -21,9 +21,11 @@ from sklearn.model_selection import train_test_split
 from skimage.color import gray2rgb
 
 import numpy as np
+import datetime as dt
 from tqdm import tqdm
 from train import *
 from utils.data import LabelledSet, UnlabelledSet #, FullRadiographDataset
+from utils.helpers import *
 
 # %%
 # Dataset radiografias
@@ -136,9 +138,10 @@ if multiple_gpus:
 model.to(device)
 model.train()
 pseudolabels = [torch.zeros(configs["unlabelled_batch_size"], device=device_unlabelled)] * (len(unlabelled_set)//configs['unlabelled_batch_size']) + [torch.zeros(len(unlabelled_set)%configs["unlabelled_batch_size"],device=device_unlabelled)]
-best_loss = np.inf()
-best_acc = -np.inf()
-best_f1 = -np.inf()
+best_loss = np.inf
+best_acc = -np.inf
+best_f1 = -np.inf
+
 for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1. For testing only.
     total = 0
     running_loss = 0
@@ -166,6 +169,7 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
                 unlabelled_loss += criterion(curr_predictions, torch.as_tensor(pseudolabels[i], device=device_unlabelled)).item()*x_prime.size(0)
             pseudolabels[i] = curr_predictions
         del curr_predictions
+
         unlabelled_loss /= len(unlabelled_set)
 
         # Calculate final loss
@@ -186,11 +190,46 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
 
         bar.set_description(metrics_text)
 
-    metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {running_loss/total:.5f} "
+    curr_loss = running_loss/total
+    metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {curr_loss:.5f} "
     for i, metric in enumerate(metrics):
         metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
         print(metrics_text)
-    
+
+    curr_acc = running_metrics[0]/total
+    curr_f1 = running_metrics[1]/total
+    if curr_loss < best_loss:
+        filename= f"best_loss-{curr_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New Best Loss: {best_loss} -> {curr_loss}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_loss = curr_loss
+    if curr_acc > best_acc:
+        filename= f"best_acc-{running_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New best accuracy: {best_acc} -> {curr_acc}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_acc = curr_acc
+    if curr_f1 > best_f1:
+        filename= f"best_f1-{curr_f1:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New best F1 score: {best_f1} -> {curr_f1}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_f1 = curr_f1
+
+    del curr_loss, curr_acc, curr_f1
 # %%
 test_loader = DataLoader(
     test_set,
@@ -200,7 +239,7 @@ test_loader = DataLoader(
 
 evaluate (
     model, 
-    epochs,
+    configs["epochs"],
     criterion,
     test_loader,
     [accuracy_score, f1_score],

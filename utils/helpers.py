@@ -20,11 +20,24 @@ def load_checkpoint(checkpoint_path, model, optimizer, device):
 
     return step
 
-def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
-    print("Saving checkpoint...")
-    directories_path = '/'.join(filename.split('/')[:-1])
-    os.makedirs(directories_path, exist_ok = True)
-    torch.save(state, filename)
+def save_checkpoint(
+        filename: str,
+        model: torch.nn.modules.module.Module,
+        optimizer: torch.optim.Optimizer,
+        current_epoch: int # In order to know how many epochs the model has been trained for
+    ):
+
+    if not filename.endswith(".pt"):
+        filename += ".pt"
+
+    print(f"Saving checkpoing to file '{filename}'...", end='')
+    checkpoint = {
+        "state_dict": model.state_dict,
+        "optmizer": optimizer.state_dict,
+        "epoch": current_epoch
+    }
+    torch.save(checkpoint, filename)
+    print("Saved.")
 
 def print_dict(d):
     print()
