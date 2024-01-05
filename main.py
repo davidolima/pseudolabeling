@@ -1,4 +1,4 @@
-#!/bin/python3
+#!./bin/python3
 
 # %% [markdown]
 # # Imports
@@ -14,12 +14,31 @@ from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 from sklearn.metrics import accuracy_score, f1_score
 
+import sys
 import numpy as np
 import datetime as dt
 from tqdm import tqdm
+
 from train import *
 from utils.data import LabelledSet, UnlabelledSet #, FullRadiographDataset
 from utils.helpers import *
+
+# %%
+# Handle arguments
+# Configuration
+configs = {
+    "epochs": 10,
+    "labelled_batch_size": 128,
+    "unlabelled_batch_size": 256,
+    "num_classes": 2,
+    "lr": 1e-5,
+    "T1": 1,
+    "T2": 6,
+    "alpha_f": .03,
+}
+
+if len(sys.argv) > 1:
+    configs = handle_config_arguments(sys.argv)
 
 # %%
 # Dataset radiografias
@@ -39,28 +58,38 @@ T_test = T.Compose([
 # In this case we are removing labelled data to test the reliability of pseudolabelling,
 # but I am separating the labelled and the unlabelled set so that it's easier to
 # to reutilize this code to other datasets.
-labelled_set = LabelledSet(root, list(range(1,20)), T_train)
-test_set = LabelledSet(root, list(range(20,30)), T_test)
+print("Labelled set ", end='')
+labelled_set   = LabelledSet  (root, list(range( 1,20)), T_train)
+print("Test set ", end='')
+test_set       = LabelledSet  (root, list(range(20,29)), T_test)
+print("Validation set ", end='')
+validation_set = LabelledSet  (root, list(range(29,30)), T_test)
+print("Unlabelled set ", end='')
 unlabelled_set = UnlabelledSet(root, list(range(30,31)), T_train)
 
 print(f"[!] {sum(map(len, [labelled_set,test_set,unlabelled_set]))} images were loaded in total.")
 
-# %% [markdown]
-# # Setup
-
 # %%
 
-# Configuration
-configs = {
-    "epochs": 10,
-    "labelled_batch_size": 128,
-    "unlabelled_batch_size": 256,
-    "num_classes": 2,
-    "lr": 1e-5,
-    "T1": 1,
-    "T2": 6,
-    "alpha_f": .03,
-}
+labelled_loader = DataLoader(
+    labelled_set,
+    batch_size=configs["labelled_batch_size"],
+    shuffle=True,
+)
+
+unlabelled_loader = DataLoader(
+    unlabelled_set,
+    batch_size=configs["unlabelled_batch_size"],
+    shuffle=False,
+)
+
+validation_loader = DataLoader(
+    unlabelled_set,
+    batch_size=configs["labelled_batch_size"],
+    shuffle=True,
+)
+
+# %%
 criterion = nn.BCELoss()
 device = "cuda" if torch.cuda.is_available() else 'cpu'
 
@@ -76,20 +105,6 @@ def alpha(t, T1=100, T2=600, alpha_f=3):
         return alpha_f*(t-T1)/(T2-T1)
     else: # T2 <= t
         return alpha_f
-
-# %%
-
-labelled_loader = DataLoader(
-    labelled_set,
-    batch_size=configs["labelled_batch_size"],
-    shuffle=True,
-)
-
-unlabelled_loader = DataLoader(
-    unlabelled_set,
-    batch_size=configs["unlabelled_batch_size"],
-    shuffle=False,
-)
 
 # %%
 # def get_state_dict(self, *args, **kwargs):
@@ -130,13 +145,14 @@ else:
 if multiple_gpus:
     model = nn.DataParallel(model, device_ids=[0,1])
 model.to(device)
-model.train()
+
 pseudolabels = [torch.zeros(configs["unlabelled_batch_size"], device=device_unlabelled)] * (len(unlabelled_set)//configs['unlabelled_batch_size']) + [torch.zeros(len(unlabelled_set)%configs["unlabelled_batch_size"],device=device_unlabelled)]
 best_loss = np.inf
 best_acc = -np.inf
 best_f1 = -np.inf
 
 for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1. For testing only.
+    model.train()
     total = 0
     running_loss = 0
     running_metrics = [0] * len(metrics)
@@ -184,46 +200,62 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
 
         bar.set_description(metrics_text)
 
-    curr_loss = running_loss/total
-    metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {curr_loss:.5f} "
+    metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {running_loss/total:.5f} "
     for i, metric in enumerate(metrics):
         metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
         print(metrics_text)
 
-    curr_acc = running_metrics[0]/total
-    curr_f1 = running_metrics[1]/total
-    if curr_loss < best_loss:
-        filename= f"best_loss-{curr_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
-        print(f"[!] New Best Loss: {best_loss} -> {curr_loss}. ", end='')
-        save_checkpoint(
-            filename=filename,
-            model=model,
-            optimizer=opt,
-            current_epoch=epoch
-        )
-        best_loss = curr_loss
-    if curr_acc > best_acc:
-        filename= f"best_acc-{running_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
-        print(f"[!] New best accuracy: {best_acc} -> {curr_acc}. ", end='')
-        save_checkpoint(
-            filename=filename,
-            model=model,
-            optimizer=opt,
-            current_epoch=epoch
-        )
-        best_acc = curr_acc
-    if curr_f1 > best_f1:
-        filename= f"best_f1-{curr_f1:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
-        print(f"[!] New best F1 score: {best_f1} -> {curr_f1}. ", end='')
-        save_checkpoint(
-            filename=filename,
-            model=model,
-            optimizer=opt,
-            current_epoch=epoch
-        )
-        best_f1 = curr_f1
+    # Validate
+    model.evaluate()
+    validation_loss = 0
+    validation_metrics = []
+    for x, y in validation_loader:
+        x, y = x.to(device), y.to(device).float()
+        opt.zero_grad()
 
-    del curr_loss, curr_acc, curr_f1
+        y_hat = model(x.float()).argmax(axis=1).float()
+        loss = criterion(y_hat, y)
+        validation_loss += loss.item() * x.size(0)
+
+        for i, metric in enumerate(metrics):
+            running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
+
+    # Save checkpoint
+    curr_val_loss = validation_loss/len(validation_set)
+    curr_val_acc = running_metrics[0]/len(validation_set)
+    curr_val_f1 = running_metrics[1]/len(validation_set)
+    if curr_val_loss < best_loss:
+        filename= f"best_loss-{curr_val_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New Best Loss: {best_loss} -> {curr_val_loss}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_loss = curr_val_loss
+    if curr_val_acc > best_acc:
+        filename= f"best_acc-{running_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New best accuracy: {best_acc} -> {curr_val_acc}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_acc = curr_val_acc
+    if curr_val_f1 > best_f1:
+        filename= f"best_f1-{curr_val_f1:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New best F1 score: {best_f1} -> {curr_val_f1}. ", end='')
+        save_checkpoint(
+            filename=filename,
+            model=model,
+            optimizer=opt,
+            current_epoch=epoch
+        )
+        best_f1 = curr_val_f1
+
+    del curr_val_loss, curr_val_acc, curr_val_f1
 # %%
 test_loader = DataLoader(
     test_set,

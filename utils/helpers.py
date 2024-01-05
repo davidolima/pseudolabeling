@@ -39,8 +39,24 @@ def save_checkpoint(
     torch.save(checkpoint, filename)
     print("Saved.")
 
+def handle_config_arguments(argv):
+    defaults = {
+        "epochs": 10,
+        "labelled_batch_size": 128,
+        "unlabelled_batch_size": 256,
+        "num_classes": 2,
+        "lr": 1e-5,
+        "T1": 1,
+        "T2": 6,
+        "alpha_f": .03,
+    }
+    if len(argv) < 1:
+        print("[!] Using the default configuration.")
+        return defaults
+    else:
+        raise NotImplementedError()
+
+
 def print_dict(d):
-    print()
     for key, value in d.items():
         print(f'{key}: {value}')
-    print()
