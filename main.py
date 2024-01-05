@@ -1,4 +1,4 @@
-#!./bin/python3
+#!/bin/python3
 
 # %% [markdown]
 # # Imports
@@ -44,8 +44,8 @@ T_test = T.Compose([
 # but I am separating the labelled and the unlabelled set so that it's easier to
 # to reutilize this code to other datasets.
 labelled_set = LabelledSet(root, list(range(1,20)), T_train)
-test_set = LabelledSet(root, list(range(20,29)), T_test)
-unlabelled_set = UnlabelledSet(root, list(range(29,31)), T_train)
+test_set = LabelledSet(root, list(range(20,30)), T_test)
+unlabelled_set = UnlabelledSet(root, list(range(30,31)), T_train)
 
 print(f"[!] {sum(map(len, [labelled_set,test_set,unlabelled_set]))} images were loaded in total.")
 
@@ -55,16 +55,22 @@ print(f"[!] {sum(map(len, [labelled_set,test_set,unlabelled_set]))} images were 
 # %%
 
 # Configuration
-epochs = 10
-#labelled_only_epochs = 10
-batch_size = 32
-num_classes = 2
-lr = 1e-5
-T1 = 1
-T2 = 6
-alpha_f = .03
+configs = {
+    "epochs": 10,
+    "labelled_batch_size": 128,
+    "unlabelled_batch_size": 256,
+    "num_classes": 2,
+    "lr": 1e-5,
+    "T1": 1,
+    "T2": 6,
+    "alpha_f": .03,
+}
 criterion = nn.BCELoss()
 device = "cuda" if torch.cuda.is_available() else 'cpu'
+
+print("-- Current configuration --------------")
+[print(f"{key}: {value}") for key, value in configs.items()]
+print("---------------------------------------")
 
 # %%
 def alpha(t, T1=100, T2=600, alpha_f=3):
@@ -79,14 +85,14 @@ def alpha(t, T1=100, T2=600, alpha_f=3):
 
 labelled_loader = DataLoader(
     labelled_set,
-    batch_size=batch_size,
+    batch_size=configs["labelled_batch_size"],
     shuffle=True,
 )
 
 unlabelled_loader = DataLoader(
     unlabelled_set,
-    batch_size=batch_size,
-    shuffle=True,
+    batch_size=configs["unlabelled_batch_size"],
+    shuffle=False,
 )
 
 # %%
@@ -96,9 +102,9 @@ unlabelled_loader = DataLoader(
 # WeightsEnum.get_state_dict = get_state_dict
 
 model = torchvision.models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+model.classifier[1] = nn.Linear(model.classifier[1].in_features, configs['num_classes'])
 
-opt = AdamW(model.parameters(), lr=lr)
+opt = AdamW(model.parameters(), lr=configs['lr'])
 
 # %% [markdown]
 # # Learn over annotated dataset
@@ -111,54 +117,84 @@ metrics = [accuracy_score, f1_score]
 # Train the model using pseudolabels
 
 #torch.autograd.set_detect_anomaly(True)
+multiple_gpus = False
+if torch.cuda.is_available():
+    if torch.cuda.device_count() > 1:
+        print(f"Running on {torch.cuda.device_count()} GPUs.")
+        multiple_gpus = True
+        device = "cuda:0"
+        device_unlabelled = "cuda:1"
+    else:
+        print("Running on " + torch.cuda.get_device_name() + ".")
+        device_unlabelled = device 
+else:
+    print("GPU not detected. Running on CPU.")
+    device_unlabelled = device
 
+if multiple_gpus:
+    model = nn.DataParallel(model, device_ids=[0,1])
 model.to(device)
 model.train()
-for epoch in range(1, epochs): # FIXME: Remove range starting from 1. For testing only.
+pseudolabels = [torch.zeros(configs["unlabelled_batch_size"], device=device_unlabelled)] * (len(unlabelled_set)//configs['unlabelled_batch_size']) + [torch.zeros(len(unlabelled_set)%configs["unlabelled_batch_size"],device=device_unlabelled)]
+best_loss = np.inf()
+best_acc = -np.inf()
+best_f1 = -np.inf()
+for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1. For testing only.
     total = 0
     running_loss = 0
     running_metrics = [0] * len(metrics)
-    pseudolabels = torch.zeros(batch_size, device=device)
     bar = tqdm(labelled_loader)
     for x,y in bar:
         x,y = x.to(device), y.to(device).float()
         opt.zero_grad()
 
-        # Calculate loss
+        # Calculate labelled loss
         y_hat = model(x.float()).argmax(axis=1).float()
         labelled_loss = criterion(y_hat, y)
+
+        # Calculate unlabelled loss
         unlabelled_loss = 0
-        for x_prime, _ in unlabelled_loader:
-            curr_predictions = model(x_prime.to(device).float()).argmax(axis=1).float()
-            unlabelled_loss += criterion(curr_predictions, pseudolabels).item()*x_prime.size(0)
-            pseudolabels = curr_predictions
-        # alpha() will assure the loss won't be affected
-        # by the unlabelled data until current the epoch >= T1.
+        
+        # When t <= T1, we only fill pseudolabels with our predictions for the i-th batch.
+        # After that we calculate the unlabelled loss applying our criterion to the curr_predictions
+        # using pseudolabels as the ground truth.
+        for i, x_prime in enumerate(unlabelled_loader):
+            x_prime = x_prime.to(device_unlabelled).float()
+            curr_predictions = model(x_prime).argmax(axis=1).to(device_unlabelled).float()
+            if epoch >= configs["T1"]:
+                #print(curr_predictions.squeeze(), pseudolabels[i])
+                unlabelled_loss += criterion(curr_predictions, torch.as_tensor(pseudolabels[i], device=device_unlabelled)).item()*x_prime.size(0)
+            pseudolabels[i] = curr_predictions
+        del curr_predictions
+        unlabelled_loss /= len(unlabelled_set)
+
+        # Calculate final loss
+        # alpha() will assure the loss won't be affected by the unlabelled data until current the epoch is >= T1.
         loss = labelled_loss + alpha(epoch)*unlabelled_loss # Equation 15 - Lee, 2013
 
         running_loss += loss.item()*x.size(0)
         total += x.size(0)
 
         for i, metric in enumerate(metrics):
-            running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy()) * x.size(0)
+            running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
 
         loss.backward()
         opt.step()
-        metrics_text = f"[Epoch {epoch}/{epochs}] Loss: {running_loss/total:.5f} "
+        metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Labelled Loss: {labelled_loss.item():.5f} Unlabelled Loss: {unlabelled_loss:.5f} Running Loss: {running_loss/total:.5f} "
         for i, metric in enumerate(metrics):
             metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
 
         bar.set_description(metrics_text)
 
-    metrics_text = f"[Epoch {epoch}/{epochs}] Loss: {running_loss/total:.5f} "
+    metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {running_loss/total:.5f} "
     for i, metric in enumerate(metrics):
         metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
         print(metrics_text)
-
+    
 # %%
 test_loader = DataLoader(
     test_set,
-    batch_size=batch_size,
+    batch_size=configs["labelled_batch_size"],
     shuffle=True,
 )
 

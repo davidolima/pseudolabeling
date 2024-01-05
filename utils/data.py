@@ -145,12 +145,6 @@ class UnlabelledSet(FullRadiographDataset):
     def __getitem__(self, index: int):
         # image and label
         filepath = self.filepaths[index]
-        filename = filepath.split('/')[-1]
-
-        # always return no label
-        label = -1
-        label_tensor = torch.tensor(label, requires_grad=True, dtype=torch.float)
-
         image = Image.open(filepath)
         image = image.convert('RGB')
 
@@ -161,7 +155,7 @@ class UnlabelledSet(FullRadiographDataset):
         else:
             raise Exception('Not implemented yet.')
 
-        return img_tensor, label_tensor
+        return img_tensor
 
 if __name__ == "__main__":
     root = "/datasets/pan-radiographs/"
