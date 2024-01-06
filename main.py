@@ -1,4 +1,4 @@
-#!./bin/python3
+#!/bin/python3
 
 # %% [markdown]
 # # Imports
@@ -27,14 +27,14 @@ from utils.helpers import *
 # Handle arguments
 # Configuration
 configs = {
-    "epochs": 10,
-    "labelled_batch_size": 128,
+    "epochs": 100,
+    "labelled_batch_size": 256,
     "unlabelled_batch_size": 256,
     "num_classes": 2,
     "lr": 1e-5,
-    "T1": 1,
-    "T2": 6,
-    "alpha_f": .03,
+    "T1": 10,
+    "T2": 60,
+    "alpha_f": .3,
 }
 
 if len(sys.argv) > 1:
@@ -84,7 +84,7 @@ unlabelled_loader = DataLoader(
 )
 
 validation_loader = DataLoader(
-    unlabelled_set,
+    validation_set,
     batch_size=configs["labelled_batch_size"],
     shuffle=True,
 )
@@ -206,19 +206,20 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         print(metrics_text)
 
     # Validate
-    model.evaluate()
+    model.eval()
     validation_loss = 0
     validation_metrics = []
-    for x, y in validation_loader:
-        x, y = x.to(device), y.to(device).float()
-        opt.zero_grad()
+    with torch.no_grad():
+        for x, y in validation_loader:
+            x, y = x.to(device), y.to(device).float()
+            opt.zero_grad()
 
-        y_hat = model(x.float()).argmax(axis=1).float()
-        loss = criterion(y_hat, y)
-        validation_loss += loss.item() * x.size(0)
+            y_hat = model(x.float()).argmax(axis=1).float()
+            loss = criterion(y_hat, y)
+            validation_loss += loss.item() * x.size(0)
 
-        for i, metric in enumerate(metrics):
-            running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
+            for i, metric in enumerate(metrics):
+                running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
 
     # Save checkpoint
     curr_val_loss = validation_loss/len(validation_set)
