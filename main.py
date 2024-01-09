@@ -19,7 +19,6 @@ import numpy as np
 import datetime as dt
 from tqdm import tqdm
 
-from train import *
 from utils.data import LabelledSet, UnlabelledSet #, FullRadiographDataset
 from utils.helpers import *
 
@@ -31,7 +30,7 @@ configs = {
     "labelled_batch_size": 256,
     "unlabelled_batch_size": 256,
     "num_classes": 2,
-    "lr": 1e-5,
+    "lr": 1e-4,
     "T1": 10,
     "T2": 60,
     "alpha_f": .3,
@@ -43,7 +42,7 @@ if len(sys.argv) > 1:
 # %%
 # Dataset radiografias
 root = "/datasets/pan-radiographs/"
-T_train = T.Compose([ # Transformations, model and optimizer from Hougaz, 2022
+T_train = T.Compose([ # Transformations, model and optimizer from Hougaz et al. (2023).
     T.Resize((224,224), antialias=True),
     T.RandomHorizontalFlip(.5),
     T.ToTensor(),
@@ -191,24 +190,24 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
 
         for i, metric in enumerate(metrics):
             running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
-
-        loss.backward()
-        opt.step()
-        metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Labelled Loss: {labelled_loss.item():.5f} Unlabelled Loss: {unlabelled_loss:.5f} Running Loss: {running_loss/total:.5f} "
+        metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {running_loss/total:.5f} "
         for i, metric in enumerate(metrics):
             metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
 
+        loss.backward()
+        opt.step()
+        
         bar.set_description(metrics_text)
 
     metrics_text = f"[Epoch {epoch}/{configs['epochs']}] Loss: {running_loss/total:.5f} "
     for i, metric in enumerate(metrics):
         metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
-        print(metrics_text)
 
     # Validate
     model.eval()
     validation_loss = 0
-    validation_metrics = []
+    total = 0
+    validation_metrics = [0] * len(metrics)
     with torch.no_grad():
         for x, y in validation_loader:
             x, y = x.to(device), y.to(device).float()
@@ -217,14 +216,19 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
             y_hat = model(x.float()).argmax(axis=1).float()
             loss = criterion(y_hat, y)
             validation_loss += loss.item() * x.size(0)
+            total += x.size(0)
 
             for i, metric in enumerate(metrics):
-                running_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
+                validation_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
+
+    for i, metric in enumerate(metrics):
+        metrics_text += f"{metric.__name__}: {validation_metrics[i]/total:.3f} "
+    print(metrics_text)
 
     # Save checkpoint
-    curr_val_loss = validation_loss/len(validation_set)
-    curr_val_acc = running_metrics[0]/len(validation_set)
-    curr_val_f1 = running_metrics[1]/len(validation_set)
+    curr_val_loss = validation_loss/total
+    curr_val_acc = running_metrics[0]/total
+    curr_val_f1 = running_metrics[1]/total
     if curr_val_loss < best_loss:
         filename= f"best_loss-{curr_val_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
         print(f"[!] New Best Loss: {best_loss} -> {curr_val_loss}. ", end='')
@@ -258,19 +262,31 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
 
     del curr_val_loss, curr_val_acc, curr_val_f1
 # %%
+# Evaluate Model
+
 test_loader = DataLoader(
     test_set,
     batch_size=configs["labelled_batch_size"],
     shuffle=True,
 )
 
-evaluate (
-    model, 
-    configs["epochs"],
-    criterion,
-    test_loader,
-    [accuracy_score, f1_score],
-)
+model.eval()
+eval_loss = 0
+total = 0
+eval_metrics = [0] * len(metrics)
+with torch.no_grad():
+    for x, y in test_loader:
+        x, y = x.to(device), y.to(device).float()
+        opt.zero_grad()
 
-# %% [markdown]
-# # Learn using pseudo-labels
+        y_hat = model(x.float()).argmax(axis=1).float()
+        loss = criterion(y_hat, y)
+        eval_loss += loss.item() * x.size(0)
+        total += x.size(0)
+
+        for i, metric in enumerate(metrics):
+            eval_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
+
+    for i, metric in enumerate(metrics):
+        metrics_text += f"{metric.__name__}: {validation_metrics[i]/total:.3f} "
+    print(metrics_text)
