@@ -114,6 +114,9 @@ def alpha(t, T1=100, T2=600, alpha_f=3):
 model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, configs['num_classes'])
 
+for params in model.parameters():
+    params.requires_grad = True
+
 opt = AdamW(model.parameters(), lr=configs['lr'])
 
 # %% [markdown]
@@ -155,6 +158,24 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
     total = 0
     running_loss = 0
     running_metrics = [0] * len(metrics)
+    
+    # Calculate unlabelled loss & get pseudo-labels
+    unlabelled_loss = 0
+
+    # When t <= T1, we only fill pseudolabels with our predictions for the i-th batch.
+    # After that we calculate the unlabelled loss applying our criterion to the curr_predictions
+    # using pseudolabels as the ground truth.
+    for i, x_prime in enumerate(tqdm(unlabelled_loader)):
+        x_prime = x_prime.to(device_unlabelled).float()
+        curr_predictions = model(x_prime).argmax(axis=1).to(device_unlabelled).float()
+        if epoch >= configs["T1"]:
+            #print(curr_predictions.squeeze(), pseudolabels[i])
+            unlabelled_loss += criterion(curr_predictions, torch.as_tensor(pseudolabels[i], device=device_unlabelled)).item()*x_prime.size(0)
+        pseudolabels[i] = curr_predictions
+    del curr_predictions
+    unlabelled_loss /= len(unlabelled_set)
+    
+    # Start iterating through labelled set
     bar = tqdm(labelled_loader)
     for x,y in bar:
         x,y = x.to(device), y.to(device).float()
@@ -163,23 +184,6 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         # Calculate labelled loss
         y_hat = model(x.float()).argmax(axis=1).float()
         labelled_loss = criterion(y_hat, y)
-
-        # Calculate unlabelled loss
-        unlabelled_loss = 0
-        
-        # When t <= T1, we only fill pseudolabels with our predictions for the i-th batch.
-        # After that we calculate the unlabelled loss applying our criterion to the curr_predictions
-        # using pseudolabels as the ground truth.
-        for i, x_prime in enumerate(unlabelled_loader):
-            x_prime = x_prime.to(device_unlabelled).float()
-            curr_predictions = model(x_prime).argmax(axis=1).to(device_unlabelled).float()
-            if epoch >= configs["T1"]:
-                #print(curr_predictions.squeeze(), pseudolabels[i])
-                unlabelled_loss += criterion(curr_predictions, torch.as_tensor(pseudolabels[i], device=device_unlabelled)).item()*x_prime.size(0)
-            pseudolabels[i] = curr_predictions
-        del curr_predictions
-
-        unlabelled_loss /= len(unlabelled_set)
 
         # Calculate final loss
         # alpha() will assure the loss won't be affected by the unlabelled data until current the epoch is >= T1.
@@ -227,8 +231,8 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
 
     # Save checkpoint
     curr_val_loss = validation_loss/total
-    curr_val_acc = running_metrics[0]/total
-    curr_val_f1 = running_metrics[1]/total
+    curr_val_acc = validation_metrics[0]/total
+    curr_val_f1 = validation_metrics[1]/total
     if curr_val_loss < best_loss:
         filename= f"best_loss-{curr_val_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
         print(f"[!] New Best Loss: {best_loss} -> {curr_val_loss}. ", end='')
@@ -240,8 +244,8 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         )
         best_loss = curr_val_loss
     if curr_val_acc > best_acc:
-        filename= f"best_acc-{running_loss:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
-        print(f"[!] New best accuracy: {best_acc} -> {curr_val_acc}. ", end='')
+        filename= f"best_acc-{curr_val_acc:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
+        print(f"[!] New Best Accuracy: {best_acc} -> {curr_val_acc}. ", end='')
         save_checkpoint(
             filename=filename,
             model=model,
@@ -251,7 +255,7 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         best_acc = curr_val_acc
     if curr_val_f1 > best_f1:
         filename= f"best_f1-{curr_val_f1:.3f}-" + dt.datetime.now().strftime('%d-%m-%Y_%H-%M')
-        print(f"[!] New best F1 score: {best_f1} -> {curr_val_f1}. ", end='')
+        print(f"[!] New Best F1 Score: {best_f1} -> {curr_val_f1}. ", end='')
         save_checkpoint(
             filename=filename,
             model=model,
