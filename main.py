@@ -179,7 +179,6 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
     bar = tqdm(labelled_loader)
     for x,y in bar:
         x,y = x.to(device), y.to(device).float()
-        opt.zero_grad()
 
         # Calculate labelled loss
         y_hat = model(x.float()).argmax(axis=1).float()
@@ -198,6 +197,7 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         for i, metric in enumerate(metrics):
             metrics_text += f"{metric.__name__}: {running_metrics[i]/total:.3f} "
 
+        opt.zero_grad()
         loss.backward()
         opt.step()
         
@@ -215,7 +215,6 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
     with torch.no_grad():
         for x, y in validation_loader:
             x, y = x.to(device), y.to(device).float()
-            opt.zero_grad()
 
             y_hat = model(x.float()).argmax(axis=1).float()
             loss = criterion(y_hat, y)
