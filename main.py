@@ -26,14 +26,14 @@ from utils.helpers import *
 # Handle arguments
 # Configuration
 configs = {
-    "epochs": 100,
+    "epochs": 1000,
     "labelled_batch_size": 256,
     "unlabelled_batch_size": 256,
     "num_classes": 2,
-    "lr": 1e-4,
-    "T1": 10,
-    "T2": 60,
-    "alpha_f": .3,
+    "lr": 1e-5,
+    "T1": 100,
+    "T2": 600,
+    "alpha_f": 1,
 }
 
 if len(sys.argv) > 1:
@@ -169,7 +169,6 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         x_prime = x_prime.to(device_unlabelled).float()
         curr_predictions = model(x_prime).argmax(axis=1).to(device_unlabelled).float()
         if epoch >= configs["T1"]:
-            #print(curr_predictions.squeeze(), pseudolabels[i])
             unlabelled_loss += criterion(curr_predictions, torch.as_tensor(pseudolabels[i], device=device_unlabelled)).item()*x_prime.size(0)
         pseudolabels[i] = curr_predictions
     del curr_predictions
@@ -185,7 +184,7 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
         labelled_loss = criterion(y_hat, y)
 
         # Calculate final loss
-        # alpha() will assure the loss won't be affected by the unlabelled data until current the epoch is >= T1.
+        # alpha() will assure the loss won't be affected by unlabelled data until the current epoch is >= T1.
         loss = labelled_loss + alpha(epoch)*unlabelled_loss # Equation 15 - Lee, 2013
 
         running_loss += loss.item()*x.size(0)
@@ -225,7 +224,7 @@ for epoch in range(0, configs["epochs"]): # FIXME: Remove range starting from 1.
                 validation_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
 
     for i, metric in enumerate(metrics):
-        metrics_text += f"{metric.__name__}: {validation_metrics[i]/total:.3f} "
+        metrics_text += f"val_{metric.__name__}: {validation_metrics[i]/total:.3f} "
     print(metrics_text)
 
     # Save checkpoint
@@ -280,7 +279,6 @@ eval_metrics = [0] * len(metrics)
 with torch.no_grad():
     for x, y in test_loader:
         x, y = x.to(device), y.to(device).float()
-        opt.zero_grad()
 
         y_hat = model(x.float()).argmax(axis=1).float()
         loss = criterion(y_hat, y)
@@ -291,5 +289,5 @@ with torch.no_grad():
             eval_metrics[i] += metric(y_hat.cpu(), y.cpu().detach().numpy())*x.size(0)
 
     for i, metric in enumerate(metrics):
-        metrics_text += f"{metric.__name__}: {validation_metrics[i]/total:.3f} "
+        metrics_text += f"test_{metric.__name__}: {eval_metrics[i]/total:.3f} "
     print(metrics_text)
