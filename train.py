@@ -72,9 +72,9 @@ def supervised_training(
         model.train()
         supervised_bar = tqdm(train_loader)
         for x, y in supervised_bar:
-            x, y = x.to(device), y.to(device).float()
+            x, y = x.to(device), y.to(device)
 
-            y_hat = torch.argmax(model(x), axis=1).float()
+            y_hat = model(x)
             loss = criterion(y_hat, y)
 
             running_loss += loss.item()*x.size(0)
@@ -184,9 +184,9 @@ def pseudolabels_training(
         model.train()
         unlabelled_bar = tqdm(unlabelled_loader)
         for x, y in unlabelled_bar:
-            x, y = x.to(device), y.to(device).float()
+            x, y = x.to(device), y.to(device)
 
-            y_hat = torch.argmax(model(x), axis=1).float()
+            y_hat = model(x)
             unlabelled_loss = criterion(y_hat, y)
 
             running_loss += unlabelled_loss.item()*x.size(0)
@@ -206,7 +206,7 @@ def pseudolabels_training(
             for x, y in tqdm(labelled_loader, desc="[Supervised forward pass]"):
                 x, y = x.to(device), y.to(device).float()
 
-                y_hat = torch.argmax(model(x), axis=1).float()
+                y_hat = model(x)
                 labelled_loss = criterion(y_hat, y)
 
                 labelled_loss.backward()
@@ -286,8 +286,8 @@ def evaluate(
     val_running_acc = 0
     val_running_f1 = 0
     for x, y in dataloader:
-        x, y = x.to(device), y.to(device).float()
-        y_hat = torch.argmax(model(x), axis=1).float()
+        x, y = x.to(device), y.to(device)
+        y_hat = model(x)
         loss = criterion(y_hat, y)
 
         val_running_loss += loss.item()*x.size(0)

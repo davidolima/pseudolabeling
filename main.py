@@ -37,16 +37,22 @@ if __name__ == "__main__":
                         help="Number of classes. (default: 2)")
     configs = parser.parse_args().__dict__
 
+    model, preprocess = get_model("efficientnet_b0", configs["num_classes"])
+    opt = AdamW(model.parameters(), lr=configs['lr'])
+    
     T_train = T.Compose([ # Transformations, model and optimizer from Hougaz et al. (2023).
         T.Resize((224,224), antialias=True),
+        #T.ToTensor(),
+        preprocess,
         T.RandomHorizontalFlip(.5),
-        T.ToTensor(),
         T.Normalize((.5, .5, .5), (.5, .5, .5), inplace=True),
     ])
 
     T_test = T.Compose([
+        #preprocess,
         T.Resize((224,224), antialias=True),
-        T.ToTensor()
+        #T.ToTensor()
+        preprocess,
     ])
 
     print("Labelled set ", end='')
@@ -74,9 +80,6 @@ if __name__ == "__main__":
         shuffle=True,
     )
 
-    model = get_model("efficientnet_b0", configs["num_classes"])
-    opt = AdamW(model.parameters(), lr=configs['lr'])
-
     print("-- Current configuration --------------")
     [print(f"{key}: {value}") for key, value in configs.items()]
     print("---------------------------------------")
@@ -100,8 +103,8 @@ if __name__ == "__main__":
     )
 
     test_loss, test_acc, test_f1 = evaluate(model, test_loader, criterion)
-    print(f"Evaluation Results: Loss: {test_loss} Accuracy: {test_acc} F1-Score: {test_f1}")
+    print(f"[-] Evaluation Results: Loss: {test_loss} Accuracy: {test_acc} F1-Score: {test_f1}")
 
     # Proceed to training using pseudolabels
-    model = get_model("efficientnet_b0", configs["num_classes"])
-    model = load_checkpoint("supervised_model.pt", model, opt, device=None)
+    #model = get_model("efficientnet_b0", configs["num_classes"])
+    #model = load_checkpoint("supervised_model-best_loss.pt", model, opt, device=None)

@@ -19,7 +19,7 @@ class FullRadiographDataset(Dataset):
         self,
         root_dir: str,
         fold_nums: list,
-        transforms,
+        transforms, 
         fold_txt_dir: str='splits',
         albumentations_package: bool=True
     ):
@@ -77,13 +77,10 @@ class FullRadiographDataset(Dataset):
         image = Image.open(filepath).convert('RGB')
 
         # apply transforms
-        if self.albumentations:
+        if self.transforms:
             #image = np.array(image)
-            img_tensor = self.transforms(image)
-        else:
-            raise Exception('Not implemented yet.')
-
-        return img_tensor, label_tensor
+            image = self.transforms(image)
+        return image, label_tensor
 
 
 class LabelledSet(FullRadiographDataset):
@@ -114,19 +111,16 @@ class LabelledSet(FullRadiographDataset):
 
 
         label = 0 if sex == "M" else 1
-        label_tensor = torch.tensor(label, requires_grad=True, dtype=torch.float)
+        #label_tensor = torch.tensor(label)
 
         image = Image.open(filepath)
         image = image.convert('RGB')
 
         # apply transforms
-        if self.albumentations:
+        if self.transforms:
             # image = np.array(image)
-            img_tensor = self.transforms(image)
-        else:
-            raise Exception('Not implemented yet.')
-
-        return img_tensor, label_tensor
+            image = self.transforms(image)
+        return image, label
 
 class UnlabelledSet(FullRadiographDataset):
     def __init__(self, root_dir, fold_nums, transforms):
@@ -149,21 +143,21 @@ class UnlabelledSet(FullRadiographDataset):
         image = image.convert('RGB')
 
         # apply transforms
-        if self.albumentations:
+        if self.transforms:
             # image = np.array(image)
-            img_tensor = self.transforms(image)
-        else:
-            raise Exception('Not implemented yet.')
-
-        return img_tensor
+            image = self.transforms(image)
+        return image
 
 if __name__ == "__main__":
     root = "/datasets/pan-radiographs/"
     f = FullRadiographDataset(root, list(range(1,31)), None)
     print("[!] Successfully loaded full radiograph dataset.")
+    print(" > Sample batch:\n", f[0])
     u = UnlabelledSet(root, list(range(1,26)), None)
     print("[!] Successfully loaded unlabelled dataset.")
+    print(" > Sample batch:\n", u[0])
     l = LabelledSet(root, list(range(26,31)), None)
     print("[!] Successfully loaded labelled dataset.")
+    print(" > Sample batch:\n", l[0])
 
     print("[!] All good!")

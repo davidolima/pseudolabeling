@@ -6,10 +6,12 @@ David de Oliveira Lima,
 import torch
 
 def calculate_accuracy(y_hat: torch.Tensor, y_true: torch.Tensor) -> float:
+    _, y_hat = torch.max(y_hat, 1)
     return torch.div(torch.sum(y_hat == y_true), len(y_true)).item()
 
 def calculate_f1_score(y_hat: torch.Tensor, y_true: torch.Tensor) -> float:
     assert len(y_hat) == len(y_true)
+    _, y_hat = torch.max(y_hat, 1)
     metrics = {"tp":0,"tn":0,"fp":0,"fn":0}
     for i in range(len(y_hat)):
         if y_hat[i] == y_true[i]:

@@ -65,13 +65,16 @@ def get_model(model_str: str, num_classes: int) -> nn.Module:
         case "efficientnet_b0":
             model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
             model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+            preprocess = models.EfficientNet_B0_Weights.IMAGENET1K_V1.transforms()
         case _:
             model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
             model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+            preprocess = models.EfficientNet_B0_Weights.IMAGENET1K_V1.transforms()
 
     for params in model.parameters():
         params.requires_grad = True
-    return model
+
+    return model, preprocess
 
 def get_device() -> str:
     device = "cuda" if torch.cuda.is_available() else "cpu"
