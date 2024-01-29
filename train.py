@@ -132,7 +132,7 @@ def supervised_training(
 
     return model
 
-def pseudolabels_training(
+def semisupervised_training(
         model: nn.Module,
         epochs: int,
         optimizer: torch.optim.Optimizer,
@@ -183,15 +183,16 @@ def pseudolabels_training(
 
         model.train()
         unlabelled_bar = tqdm(unlabelled_loader)
-        for x, y in unlabelled_bar:
-            x, y = x.to(device), y.to(device)
+        for x in unlabelled_bar:
+            x = x.to(device)
 
             y_hat = model(x)
-            unlabelled_loss = criterion(y_hat, y)
+            _, pseudolabel = torch.max(model(x), 1)
+            unlabelled_loss = criterion(y_hat, pseudolabel)
 
             running_loss += unlabelled_loss.item()*x.size(0)
-            running_acc += calculate_accuracy(y_hat, y)*x.size(0)
-            running_f1 += calculate_f1_score(y_hat, y)*x.size(0)
+            running_acc += calculate_accuracy(y_hat, pseudolabel)*x.size(0)
+            running_f1 += calculate_f1_score(y_hat, pseudolabel)*x.size(0)
             total += x.size(0)
 
             optimizer.zero_grad()
@@ -204,7 +205,7 @@ def pseudolabels_training(
         if epoch % supervised_step == 0:
             model.eval()
             for x, y in tqdm(labelled_loader, desc="[Supervised forward pass]"):
-                x, y = x.to(device), y.to(device).float()
+                x, y = x.to(device), y.to(device)
 
                 y_hat = model(x)
                 labelled_loss = criterion(y_hat, y)

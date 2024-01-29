@@ -27,15 +27,15 @@ def load_checkpoint(
 
     # load variables
     try:
-        model.load_state_dict(checkpoint['state_dict'])
+        model.load_state_dict(checkpoint['state_dict']())
     except:
         correct_state_dict = {}
-        for key, val in checkpoint['state_dict'].items():
+        for key, val in checkpoint['state_dict']().items():
             correct_state_dict[key[len('module.'):]] = val
         model.load_state_dict(correct_state_dict)
     ## add option to pass no optimizer (e.g. in inference)
     if optimizer is not None:
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        optimizer.load_state_dict(checkpoint['optmizer']())
 
 def save_checkpoint(
         filename: str,
@@ -82,6 +82,6 @@ def get_device() -> str:
     if device == "cuda":
         print(torch.cuda.get_device_name())
     else:
-        print("device")
+        print(device)
 
     return device
