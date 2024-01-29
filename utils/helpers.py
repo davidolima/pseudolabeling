@@ -56,7 +56,7 @@ def save_checkpoint(
     torch.save(checkpoint, filename)
     print("Saved.")
 
-def print_dict(d):
+def print_dict(d: dict):
     for key, value in d.items():
         print(f'{key}: {value}')
 
