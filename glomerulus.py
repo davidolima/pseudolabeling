@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!./bin/python3
 
 """
 David de Oliveira Lima
@@ -16,13 +16,13 @@ from utils.metrics import *
 import sys
 import argparse
 
-from utils.glomerulus_data import LabelledSet, UnlabelledSet #, FullRadiographDataset
+from utils.generic_dataset import GenericDataset
 from utils.helpers import *
 from train import *
 
 if __name__ == "__main__":
     # Setup
-    root = "/datasets/glomerulos-kaggle"
+    root = "/datasets/glomerulus-kaggle"
     criterion = nn.CrossEntropyLoss()
     
     # Parse arguments
@@ -62,16 +62,12 @@ if __name__ == "__main__":
     print("---------------------------------------")
 
     # Load data
-    print("Labelled set ", end='')
-    labelled_set   = LabelledSet  (root, list(range( 1,20)), T_train)
-    print("Unlabelled set ", end='')
-    unlabelled_set = UnlabelledSet  (root, list(range( 20,26)), T_train)
-    print("Validation set ", end='')
-    validation_set = LabelledSet  (root, list(range( 26,27)), T_train)
-    print("Test set ", end='')
-    test_set       = LabelledSet  (root, list(range( 27,31)), T_test)
+    labelled_set   = GenericDataset(root, ["train"], transforms=T_train)
+    labelled_set, validation_set = labelled_set.split(.5, shuffle=True)
+    validation_set, test_set = validation_set.split(.5, shuffle=True)
 
-    print(f"[!] {sum(map(len, [labelled_set,validation_set,test_set]))} images were loaded in total.")
+    unlabelled_set = GenericDataset(root, ["test"], ignore_unlabelled=False, transforms=T_train)
+    print(f"[!] {sum(map(len, [labelled_set,validation_set,test_set]))} labelled images were loaded in total.")
 
     labelled_loader = DataLoader(
         labelled_set,
@@ -98,7 +94,7 @@ if __name__ == "__main__":
             train_loader=labelled_loader,
             criterion=criterion,
             validation_loader=validation_loader,
-            checkpoint_name="supervised_model",
+            checkpoint_name="glomerulus-supervised_model",
         )
 
     print("[!] Beginning evaluation...")
@@ -110,7 +106,7 @@ if __name__ == "__main__":
 
     # Evaluate model over test set.
     model, _ = get_model("efficientnet_b0", configs["num_classes"])
-    load_checkpoint("checkpoints/supervised_model-best_loss.pt", model, opt, device=None)
+    load_checkpoint("checkpoints/glomerulus-supervised_model-best_loss.pt", model, opt, device=None)
 
     if not configs["skip_supervised_evaluation"]:
         test_loss, test_acc, test_f1 = evaluate(model, test_loader, criterion)
@@ -133,11 +129,11 @@ if __name__ == "__main__":
         criterion=criterion,
         supervised_step=50,
         validation_loader = validation_loader,
-        checkpoint_name = "semisupervised_model",
+        checkpoint_name = "glomerulus-semisupervised_model",
     )
     
     # Evaluate model over test set.
     model, _ = get_model("efficientnet_b0", configs["num_classes"])
-    load_checkpoint("semisupervised_model-best_loss.pt", model, opt, device=None)
+    load_checkpoint("glomerulus-semisupervised_model-best_loss.pt", model, opt, device=None)
     test_loss, test_acc, test_f1 = evaluate(model, test_loader, criterion)
     print(f"[-] Evaluation Results: Loss: {test_loss} Accuracy: {test_acc} F1-Score: {test_f1}")
