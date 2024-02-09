@@ -14,6 +14,7 @@ from typing import *
 
 from utils.metrics import *
 from utils.helpers import *
+from sklearn.metrics import accuracy_score, f1_score
 
 """
 TODO:
@@ -97,6 +98,7 @@ def supervised_training(
             device=device,
         )
 
+        val_f1 = val_f1[0] # HACK
         print(f"Val Loss {val_loss:.2f} Val Acc {val_acc:.2f} Val F1 {val_f1:.2f}")
 
         if val_loss < best_loss:
@@ -222,6 +224,7 @@ def semisupervised_training(
             device=device,
         )
 
+        val_f1 = val_f1[0] # HACK
         print(f"Val Loss {val_loss:.2f} Val Acc {val_acc:.2f} Val F1 {val_f1:.2f}")
 
         if val_loss < best_loss:
@@ -262,12 +265,13 @@ def evaluate(
         dataloader: DataLoader,
         criterion: torch.nn.modules.loss._Loss,
         device: Optional[str] = None,
+        metrics: Optional[list[str]] = None,
 ):
     """
     Evaluates a given model and returns its loss, accuracy and f1-score performance of a given
     Dataset.
 
-    Returns: Tuple containing loss, accuracy and f1-score.
+    Returns: Tuple containing loss, accuracy and specified metrics.
 
     Parameters:
      - model: Model that will be trained
@@ -275,6 +279,7 @@ def evaluate(
      - criterion: Loss function to be used.
      - device: Which device the training will take place on. Leave as `None`
                to detect automatically.
+     - metrics: List of metric functions to calculate during evaluation.
     """
     if not device:
         device = get_device()
@@ -284,21 +289,33 @@ def evaluate(
 
     val_total = 0
     val_running_loss = 0
-    val_running_acc = 0
-    val_running_f1 = 0
+
+    if metrics is None:
+        metrics = [accuracy_score, lambda y_true, y_pred: f1_score(y_true, y_pred, average="micro")]
+    else:
+        metrics = [accuracy_score] + metrics
+
+    running_metrics = [0] * len(metrics)
+
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
         y_hat = model(x)
         loss = criterion(y_hat, y)
+        _, y_hat = torch.max(y_hat, 1)
 
+        # Update running metrics
+        for i in range(len(metrics)):
+            z = metrics[i](y_hat.cpu().detach().numpy(), y.cpu().detach().numpy()) * x.size(0)
+            print(z)
+            running_metrics[i] += z
         val_running_loss += loss.item()*x.size(0)
-        val_running_acc += calculate_accuracy(y_hat, y)*x.size(0)
-        val_running_f1 += calculate_f1_score(y_hat, y)*x.size(0)
         val_total += x.size(0)
 
+    # Get metrics' mean
     val_running_loss /= val_total
-    val_running_acc  /= val_total
-    val_running_f1   /= val_total
+    for i in range(len(running_metrics)):
+        running_metrics[i] /= val_total
 
+    val_accuracy = running_metrics.pop(0)
     model.train()
-    return val_running_loss, val_running_acc, val_running_f1
+    return val_running_loss, val_accuracy, running_metrics

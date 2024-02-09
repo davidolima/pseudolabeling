@@ -32,8 +32,6 @@ class GenericDataset(Dataset):
         # Poor man's overloading
         filepaths: Optional[str] = None,
         classes: Optional[list[str]] = None,
-
-
     ) -> None:
         super().__init__()
 
@@ -118,25 +116,29 @@ class GenericDataset(Dataset):
         # image and label
         filepath, label = self.filepaths[index]
 
-        # Encode label
-        label = self.classes[label]
-        label_tensor = torch.tensor(label, dtype=torch.uint8)
-
         image = Image.open(filepath).convert('RGB')
-
         # apply transforms
         if self.transforms:
             image = self.transforms(image)
-        return image, label_tensor
 
-    def shuffle(self) -> None:
-        from random import shuffle
-        shuffle(self.filepaths)
+        if label == "unlabelled":
+            return image
 
-    def split(self, percentage: float, shuffle: bool = True) -> (Dataset, Dataset):
+        label = self.classes[label]
+        label_tensor = torch.tensor(label, dtype=torch.uint8)
+        return image, label
+
+    def shuffle(self, seed=None) -> None:
+        if seed is not None:
+            rng = np.random.default_rng(seed)
+            rng.shuffle(self.filepaths)
+        else:
+            np.random.shuffle(self.filepaths)
+
+    def split(self, percentage: float, shuffle: bool = True, seed=None) -> (Dataset, Dataset):
         assert 0 < percentage < 1, "Percentage must be between 0 and 1."
 
-        if shuffle: self.shuffle()
+        if shuffle: self.shuffle(seed)
 
         percent_idx = int(np.ceil(percentage * len(self.filepaths)))
         print(percent_idx)
