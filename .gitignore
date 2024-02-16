@@ -5,4 +5,5 @@ lib64/
 share/
 .idea/
 lib64
-__pycache__/
+*/__pycache__/
+*.pyc

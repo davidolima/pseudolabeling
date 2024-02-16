@@ -14,12 +14,21 @@ from typing import *
 
 from utils.metrics import *
 from utils.helpers import *
+from sklearn.metrics import accuracy_score, f1_score
 
 """
 TODO:
  - Choose which metric to watch and save each checkpoint.
  - Pass a list of metrics to be calculated each epoch.
 """
+
+def alpha_coefficient(t: int, T1:int = 100, T2:int = 600, alpha_f = 3) -> float:
+    if t < T1:
+        return 0
+    elif t < T2:
+        return (t-T1)*alpha_f/(T2-T1)
+    else:
+        return alpha_f
 
 
 def supervised_training(
@@ -97,6 +106,7 @@ def supervised_training(
             device=device,
         )
 
+        val_f1 = val_f1[0] # HACK
         print(f"Val Loss {val_loss:.2f} Val Acc {val_acc:.2f} Val F1 {val_f1:.2f}")
 
         if val_loss < best_loss:
@@ -143,6 +153,7 @@ def semisupervised_training(
         validation_loader: Optional[DataLoader] = None,
         checkpoint_name: Optional[str] = None,
         device: Optional[str] = None,
+        unlabelled_weight: Optional[Callable] = alpha_coefficient,
 ) -> nn.Module:
     """
     Function for training a model using labelled and unlaballed samples through pseudo-labels.
@@ -152,6 +163,7 @@ def semisupervised_training(
     Parameters:
      - model: Model that will be trained.
      - epochs: How many epochs the model will be trained for.
+     - optimizer: Optimizer to be used during training.
      - labelled_loader: torch.utils.data.DataLoader object for loading labelled
                         samples of the dataset.
      - unlabelled_loader: torch.utils.data.DataLoader object for loading unlabelled
@@ -165,6 +177,9 @@ def semisupervised_training(
                         NOTE: currently saves checkpoints based on loss, acc and f1.
      - device: Which device the training will take place on. Leave as `None`
                to detect automatically.
+     - unlabelled_weight: Function to be used to weight the unlabelled data loss during
+                          training. Must accept the current epoch as the only obligatory
+                          parameter. (Default: alpha_coefficient(t))
     """
 
     if not device:
@@ -186,9 +201,12 @@ def semisupervised_training(
         for x in unlabelled_bar:
             x = x.to(device)
 
-            y_hat = model(x)
+            model.eval()
             _, pseudolabel = torch.max(model(x), 1)
-            unlabelled_loss = criterion(y_hat, pseudolabel)
+            model.train()
+
+            y_hat = model(x)
+            unlabelled_loss =  unlabelled_weight(epoch) * criterion(y_hat, pseudolabel)
 
             running_loss += unlabelled_loss.item()*x.size(0)
             running_acc += calculate_accuracy(y_hat, pseudolabel)*x.size(0)
@@ -203,15 +221,15 @@ def semisupervised_training(
 
         # One forward pass through the labelled dataset every `supervised_step` epochs
         if epoch % supervised_step == 0:
-            model.eval()
             for x, y in tqdm(labelled_loader, desc="[Supervised forward pass]"):
                 x, y = x.to(device), y.to(device)
 
                 y_hat = model(x)
                 labelled_loss = criterion(y_hat, y)
 
+                optimizer.zero_grad()
                 labelled_loss.backward()
-            model.train()
+                optimizer.step()
 
         print(f"[Epoch {epoch}/{epochs}] Loss {running_loss/total:.2f} Accuracy: {running_acc/total:.2f} F1-Score: {running_f1/total:.2f}", end=' ')
 
@@ -222,6 +240,7 @@ def semisupervised_training(
             device=device,
         )
 
+        val_f1 = val_f1[0] # HACK
         print(f"Val Loss {val_loss:.2f} Val Acc {val_acc:.2f} Val F1 {val_f1:.2f}")
 
         if val_loss < best_loss:
@@ -262,12 +281,13 @@ def evaluate(
         dataloader: DataLoader,
         criterion: torch.nn.modules.loss._Loss,
         device: Optional[str] = None,
+        metrics: Optional[list[str]] = None,
 ):
     """
     Evaluates a given model and returns its loss, accuracy and f1-score performance of a given
     Dataset.
 
-    Returns: Tuple containing loss, accuracy and f1-score.
+    Returns: Tuple containing loss, accuracy and specified metrics.
 
     Parameters:
      - model: Model that will be trained
@@ -275,6 +295,7 @@ def evaluate(
      - criterion: Loss function to be used.
      - device: Which device the training will take place on. Leave as `None`
                to detect automatically.
+     - metrics: List of metric functions to calculate during evaluation.
     """
     if not device:
         device = get_device()
@@ -284,21 +305,31 @@ def evaluate(
 
     val_total = 0
     val_running_loss = 0
-    val_running_acc = 0
-    val_running_f1 = 0
+
+    if metrics is None:
+        metrics = [accuracy_score, lambda y_true, y_pred: f1_score(y_true, y_pred, average="micro")]
+    else:
+        metrics = [accuracy_score] + metrics
+
+    running_metrics = [0] * len(metrics)
+
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
         y_hat = model(x)
         loss = criterion(y_hat, y)
+        _, y_hat = torch.max(y_hat, 1)
 
+        # Update running metrics
+        for i in range(len(metrics)):
+            running_metrics[i] += metrics[i](y_hat.cpu().detach().numpy(), y.cpu().detach().numpy()) * x.size(0)
         val_running_loss += loss.item()*x.size(0)
-        val_running_acc += calculate_accuracy(y_hat, y)*x.size(0)
-        val_running_f1 += calculate_f1_score(y_hat, y)*x.size(0)
         val_total += x.size(0)
 
+    # Get metrics' mean
     val_running_loss /= val_total
-    val_running_acc  /= val_total
-    val_running_f1   /= val_total
+    for i in range(len(running_metrics)):
+        running_metrics[i] /= val_total
 
+    val_accuracy = running_metrics.pop(0)
     model.train()
-    return val_running_loss, val_running_acc, val_running_f1
+    return val_running_loss, val_accuracy, running_metrics
