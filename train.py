@@ -22,6 +22,14 @@ TODO:
  - Pass a list of metrics to be calculated each epoch.
 """
 
+def alpha_coefficient(t: int, T1:int = 100, T2:int = 600, alpha_f = 3) -> float:
+    if t < T1:
+        return 0
+    elif t < T2:
+        return (t-T1)*alpha_f/(T2-T1)
+    else:
+        return alpha_f
+
 
 def supervised_training(
         model: nn.Module,
@@ -145,6 +153,7 @@ def semisupervised_training(
         validation_loader: Optional[DataLoader] = None,
         checkpoint_name: Optional[str] = None,
         device: Optional[str] = None,
+        unlabelled_weight: Optional[Callable] = alpha_coefficient,
 ) -> nn.Module:
     """
     Function for training a model using labelled and unlaballed samples through pseudo-labels.
@@ -154,6 +163,7 @@ def semisupervised_training(
     Parameters:
      - model: Model that will be trained.
      - epochs: How many epochs the model will be trained for.
+     - optimizer: Optimizer to be used during training.
      - labelled_loader: torch.utils.data.DataLoader object for loading labelled
                         samples of the dataset.
      - unlabelled_loader: torch.utils.data.DataLoader object for loading unlabelled
@@ -167,6 +177,9 @@ def semisupervised_training(
                         NOTE: currently saves checkpoints based on loss, acc and f1.
      - device: Which device the training will take place on. Leave as `None`
                to detect automatically.
+     - unlabelled_weight: Function to be used to weight the unlabelled data loss during
+                          training. Must accept the current epoch as the only obligatory
+                          parameter. (Default: alpha_coefficient(t))
     """
 
     if not device:
@@ -188,9 +201,12 @@ def semisupervised_training(
         for x in unlabelled_bar:
             x = x.to(device)
 
-            y_hat = model(x)
+            model.eval()
             _, pseudolabel = torch.max(model(x), 1)
-            unlabelled_loss = criterion(y_hat, pseudolabel)
+            model.train()
+
+            y_hat = model(x)
+            unlabelled_loss =  unlabelled_weight(epoch) * criterion(y_hat, pseudolabel)
 
             running_loss += unlabelled_loss.item()*x.size(0)
             running_acc += calculate_accuracy(y_hat, pseudolabel)*x.size(0)
@@ -205,15 +221,15 @@ def semisupervised_training(
 
         # One forward pass through the labelled dataset every `supervised_step` epochs
         if epoch % supervised_step == 0:
-            model.eval()
             for x, y in tqdm(labelled_loader, desc="[Supervised forward pass]"):
                 x, y = x.to(device), y.to(device)
 
                 y_hat = model(x)
                 labelled_loss = criterion(y_hat, y)
 
+                optimizer.zero_grad()
                 labelled_loss.backward()
-            model.train()
+                optimizer.step()
 
         print(f"[Epoch {epoch}/{epochs}] Loss {running_loss/total:.2f} Accuracy: {running_acc/total:.2f} F1-Score: {running_f1/total:.2f}", end=' ')
 
@@ -305,9 +321,7 @@ def evaluate(
 
         # Update running metrics
         for i in range(len(metrics)):
-            z = metrics[i](y_hat.cpu().detach().numpy(), y.cpu().detach().numpy()) * x.size(0)
-            print(z)
-            running_metrics[i] += z
+            running_metrics[i] += metrics[i](y_hat.cpu().detach().numpy(), y.cpu().detach().numpy()) * x.size(0)
         val_running_loss += loss.item()*x.size(0)
         val_total += x.size(0)
 

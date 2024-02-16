@@ -28,7 +28,7 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     evaluation_metrics = [
         lambda y_true, y_pred: f1_score(y_true, y_pred, average="micro"),
-        lambda y_true, y_pred: f1_score(y_true, y_pred, average=None),
+        lambda y_true, y_pred: f1_score(y_true, y_pred, labels=[0,1,2,3], average=None),
     ]
 
     # Parse arguments
@@ -49,6 +49,12 @@ if __name__ == "__main__":
                         help="Skips the semisupervised traninig with pseudolabels. (default: False)")
     parser.add_argument("--skip_supervised_evaluation", type=bool, default=False, metavar="B",
                         help="Skips evaluation of the model after supervised training and before semisupervised training. (default: False)")
+    parser.add_argument("--alpha_f", type=int, default=3, metavar="B",
+                        help="Specify parameter `alpha_f` for unlabelled data weight. (default: 3)")
+    parser.add_argument("--T1", type=int, default=100, metavar="N",
+                        help="Specify parameter `T1` for unlabelled data weight. (default: 100)")
+    parser.add_argument("--T2", type=int, default=600, metavar="N",
+                        help="Specify parameter `T2` for unlabelled data weight. (default: 600)")
     configs = parser.parse_args().__dict__
 
     model, preprocess = get_model("efficientnet_b0", configs["num_classes"])
@@ -116,7 +122,7 @@ if __name__ == "__main__":
 
     # Evaluate model over test set.
     model, _ = get_model("efficientnet_b0", configs["num_classes"])
-    load_checkpoint("checkpoints/glomerulus-supervised_model-best_loss.pt", model, opt, device=None)
+    load_checkpoint("glomerulus-supervised_model-best_loss.pt", model, opt, device=None)
 
     if not configs["skip_supervised_evaluation"]:
         test_loss, test_acc, test_metrics = evaluate(model, test_loader, criterion, metrics=evaluation_metrics)
@@ -142,6 +148,7 @@ if __name__ == "__main__":
             supervised_step=50,
             validation_loader = validation_loader,
             checkpoint_name = "glomerulus-semisupervised_model",
+            unlabelled_weight=lambda t: alpha_coefficient(t, T1=configs["T1"], T2=configs["T2"], alpha_f=configs["alpha_f"])
         )
     
     # Evaluate model over test set.
